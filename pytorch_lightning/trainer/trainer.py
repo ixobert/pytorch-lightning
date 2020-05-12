@@ -1,5 +1,6 @@
 import inspect
 import os
+import logging as python_logging
 from argparse import ArgumentParser
 from typing import Union, Optional, List, Dict, Tuple, Iterable, Any
 
@@ -129,6 +130,7 @@ class Trainer(
             auto_lr_find: Union[bool, str] = False,
             replace_sampler_ddp: bool = True,
             progress_bar_callback: Optional[Union[ProgressBarBase, bool]] = True,
+            auto_scale_batch_size: Optional[str] = None,
             amp_level: str = 'O1',  # backward compatible, todo: remove in v0.8.0
             default_save_path=None,  # backward compatible, todo: remove in v0.8.0
             gradient_clip=None,  # backward compatible, todo: remove in v0.8.0
@@ -293,6 +295,12 @@ class Trainer(
 
             terminate_on_nan: If set to True, will terminate training (by raising a `ValueError`) at the
                 end of each training batch, if any of the parameters or the loss are NaN or +/-inf.
+
+            auto_scale_batch_size: If set to True, will `initially` run a batch size
+                finder trying to find the largest batch size that fits into memory.
+                The result will be stored in self.hparams.batch_size in the LightningModule.
+                Additionally, can be set to either `power` that estimates the batch size through
+                a power search or `binsearch` that estimates the batch size through a binary search.
         """
 
         # Init callbacks
@@ -368,6 +376,7 @@ class Trainer(
         self.reload_dataloaders_every_epoch = reload_dataloaders_every_epoch
 
         self.auto_lr_find = auto_lr_find
+        self.auto_scale_batch_size = auto_scale_batch_size
         self.replace_sampler_ddp = replace_sampler_ddp
 
         self.truncated_bptt_steps = truncated_bptt_steps
@@ -454,6 +463,7 @@ class Trainer(
         # distributed backend choice
         self.distributed_backend = distributed_backend
         self.set_distributed_mode(distributed_backend)
+        self.device = torch.device('cpu')
 
         # override dist backend when using tpus
         if self.on_tpu:
@@ -474,7 +484,7 @@ class Trainer(
             self.show_progress_bar = show_progress_bar
 
         self.progress_bar_refresh_rate = progress_bar_refresh_rate
-        self.progress_bar_callback = None
+        self.progress_bar_callback = progress_bar_callback
         self.configure_progress_bar()
 
         # logging
@@ -500,8 +510,7 @@ class Trainer(
         self.autocast_original_forward = None
         self.use_native_amp = hasattr(torch.cuda, "amp") and hasattr(torch.cuda.amp, "autocast")
         self.precision = precision
-        if self.use_native_amp and self.precision == 16:
-            self.scaler = torch.cuda.amp.GradScaler()
+        self.scaler = None
 
         # TODO: remove for v0.8.0
         self.amp_level = amp_level
@@ -736,6 +745,10 @@ class Trainer(
         # only on proc 0 because no spawn has happened yet
         model.prepare_data()
 
+        # Run auto batch size scaling
+        if self.auto_scale_batch_size:
+            self.scale_batch_size(model, mode=self.auto_scale_batch_size)
+
         # Run learning rate finder:
         if self.auto_lr_find:
             self._run_lr_finder_internally(model)
@@ -843,6 +856,10 @@ class Trainer(
 
         # set local properties on the model
         self.copy_trainer_model_properties(ref_model)
+
+        # init amp. Must be done here instead of __init__ to allow ddp to work
+        if self.use_native_amp and self.precision == 16:
+            self.scaler = torch.cuda.amp.GradScaler()
 
         # log hyper-parameters
         if self.logger is not None:
@@ -997,17 +1014,17 @@ class Trainer(
         if not self.is_overridden('training_step', model):
             raise MisconfigurationException(
                 'No `training_step()` method defined. Lightning `Trainer` expects as minimum a'
-                ' `training_step()`, `training_dataloader()` and `configure_optimizers()` to be defined.')
+                ' `training_step()`, `train_dataloader()` and `configure_optimizers()` to be defined.')
 
         if not self.is_overridden('train_dataloader', model):
             raise MisconfigurationException(
                 'No `train_dataloader()` method defined. Lightning `Trainer` expects as minimum a'
-                ' `training_step()`, `training_dataloader()` and `configure_optimizers()` to be defined.')
+                ' `training_step()`, `train_dataloader()` and `configure_optimizers()` to be defined.')
 
         if not self.is_overridden('configure_optimizers', model):
             raise MisconfigurationException(
                 'No `configure_optimizers()` method defined. Lightning `Trainer` expects as minimum a'
-                ' `training_step()`, `training_dataloader()` and `configure_optimizers()` to be defined.')
+                ' `training_step()`, `train_dataloader()` and `configure_optimizers()` to be defined.')
 
         # Check val_dataloader, validation_step and validation_epoch_end
         if self.is_overridden('val_dataloader', model):
@@ -1042,7 +1059,7 @@ class Trainer(
 
         has_test_step = self.is_overridden('test_step', model)
         has_test_epoch_end = self.is_overridden('test_epoch_end', model)
-        gave_test_loader = hasattr(model, 'test_dataloader') and model.test_dataloader()
+        gave_test_loader = self.is_overridden('test_dataloader', model)
 
         if gave_test_loader and not has_test_step:
             raise MisconfigurationException('You passed in a `test_dataloader` but did not implement `test_step()`')

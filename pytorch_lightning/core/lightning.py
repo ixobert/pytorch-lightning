@@ -72,6 +72,9 @@ class LightningModule(ABC, GradInformation, ModelIO, ModelHooks):
 
         self.hparams = None
 
+        #: device reference
+        self.device = None
+
     def print(self, *args, **kwargs) -> None:
         r"""
         Prints only from process 0. Use this in any distributed mode to log only once.
@@ -257,6 +260,7 @@ class LightningModule(ABC, GradInformation, ModelIO, ModelHooks):
             May contain the following optional keys:
 
             - log (metrics to be added to the logger; only tensors)
+            - progress_bar (dict for progress bar display)
             - any metric used in a callback (e.g. early stopping).
 
         Note:
@@ -280,7 +284,8 @@ class LightningModule(ABC, GradInformation, ModelIO, ModelHooks):
 
                     # log training accuracy at the end of an epoch
                     results = {
-                        'log': {'train_acc': train_acc_mean.item()}
+                        'log': {'train_acc': train_acc_mean.item()},
+                        'progress_bar': {'train_acc': train_acc_mean},
                     }
                     return results
 
@@ -303,6 +308,7 @@ class LightningModule(ABC, GradInformation, ModelIO, ModelHooks):
                     # log training accuracy at the end of an epoch
                     results = {
                         'log': {'train_acc': train_acc_mean.item(), 'step': self.current_epoch}
+                        'progress_bar': {'train_acc': train_acc_mean},
                     }
                     return results
         """
