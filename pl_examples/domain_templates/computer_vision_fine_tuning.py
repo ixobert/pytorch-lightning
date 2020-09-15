@@ -27,11 +27,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Optional, Generator, Union
 
-import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
-from pytorch_lightning import _logger as log
 from torch import optim
+from torch.nn import Module
 from torch.optim.lr_scheduler import MultiStepLR
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader
@@ -40,6 +39,9 @@ from torchvision import transforms
 from torchvision.datasets import ImageFolder
 from torchvision.datasets.utils import download_and_extract_archive
 
+import pytorch_lightning as pl
+from pytorch_lightning import _logger as log
+
 BN_TYPES = (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d)
 DATA_URL = 'https://storage.googleapis.com/mledu-datasets/cats_and_dogs_filtered.zip'
 
@@ -47,7 +49,7 @@ DATA_URL = 'https://storage.googleapis.com/mledu-datasets/cats_and_dogs_filtered
 #  --- Utility functions ---
 
 
-def _make_trainable(module: torch.nn.Module) -> None:
+def _make_trainable(module: Module) -> None:
     """Unfreezes a given module.
 
     Args:
@@ -58,7 +60,7 @@ def _make_trainable(module: torch.nn.Module) -> None:
     module.train()
 
 
-def _recursive_freeze(module: torch.nn.Module,
+def _recursive_freeze(module: Module,
                       train_bn: bool = True) -> None:
     """Freezes the layers of a given module.
 
@@ -80,7 +82,7 @@ def _recursive_freeze(module: torch.nn.Module,
             _recursive_freeze(module=child, train_bn=train_bn)
 
 
-def freeze(module: torch.nn.Module,
+def freeze(module: Module,
            n: Optional[int] = None,
            train_bn: bool = True) -> None:
     """Freezes the layers up to index n (if n is not None).
@@ -101,7 +103,7 @@ def freeze(module: torch.nn.Module,
         _make_trainable(module=child)
 
 
-def filter_params(module: torch.nn.Module,
+def filter_params(module: Module,
                   train_bn: bool = True) -> Generator:
     """Yields the trainable parameters of a given module.
 
@@ -124,7 +126,7 @@ def filter_params(module: torch.nn.Module,
                 yield param
 
 
-def _unfreeze_and_add_param_group(module: torch.nn.Module,
+def _unfreeze_and_add_param_group(module: Module,
                                   optimizer: Optimizer,
                                   lr: Optional[float] = None,
                                   train_bn: bool = True):
@@ -148,10 +150,24 @@ class TransferLearningModel(pl.LightningModule):
         dl_path: Path where the data will be downloaded
     """
     def __init__(self,
-                 hparams: argparse.Namespace,
-                 dl_path: Union[str, Path]) -> None:
+                 dl_path: Union[str, Path],
+                 backbone: str = 'resnet50',
+                 train_bn: bool = True,
+                 milestones: tuple = (5, 10),
+                 batch_size: int = 8,
+                 lr: float = 1e-2,
+                 lr_scheduler_gamma: float = 1e-1,
+                 num_workers: int = 6, **kwargs) -> None:
         super().__init__()
-        self.hparams = hparams
+        self.dl_path = dl_path
+        self.backbone = backbone
+        self.train_bn = train_bn
+        self.milestones = milestones
+        self.batch_size = batch_size
+        self.lr = lr
+        self.lr_scheduler_gamma = lr_scheduler_gamma
+        self.num_workers = num_workers
+
         self.dl_path = dl_path
         self.__build_model()
 
@@ -159,12 +175,12 @@ class TransferLearningModel(pl.LightningModule):
         """Define model layers & loss."""
 
         # 1. Load pre-trained network:
-        model_func = getattr(models, self.hparams.backbone)
+        model_func = getattr(models, self.backbone)
         backbone = model_func(pretrained=True)
 
         _layers = list(backbone.children())[:-1]
         self.feature_extractor = torch.nn.Sequential(*_layers)
-        freeze(module=self.feature_extractor, train_bn=self.hparams.train_bn)
+        freeze(module=self.feature_extractor, train_bn=self.train_bn)
 
         # 2. Classifier:
         _fc_layers = [torch.nn.Linear(2048, 256),
@@ -187,36 +203,36 @@ class TransferLearningModel(pl.LightningModule):
 
         return x
 
-    def loss(self, labels, logits):
+    def loss(self, logits, labels):
         return self.loss_func(input=logits, target=labels)
 
     def train(self, mode=True):
         super().train(mode=mode)
 
         epoch = self.current_epoch
-        if epoch < self.hparams.milestones[0] and mode:
+        if epoch < self.milestones[0] and mode:
             # feature extractor is frozen (except for BatchNorm layers)
             freeze(module=self.feature_extractor,
-                   train_bn=self.hparams.train_bn)
+                   train_bn=self.train_bn)
 
-        elif self.hparams.milestones[0] <= epoch < self.hparams.milestones[1] and mode:
+        elif self.milestones[0] <= epoch < self.milestones[1] and mode:
             # Unfreeze last two layers of the feature extractor
             freeze(module=self.feature_extractor,
                    n=-2,
-                   train_bn=self.hparams.train_bn)
+                   train_bn=self.train_bn)
 
     def on_epoch_start(self):
         """Use `on_epoch_start` to unfreeze layers progressively."""
         optimizer = self.trainer.optimizers[0]
-        if self.current_epoch == self.hparams.milestones[0]:
+        if self.current_epoch == self.milestones[0]:
             _unfreeze_and_add_param_group(module=self.feature_extractor[-2:],
                                           optimizer=optimizer,
-                                          train_bn=self.hparams.train_bn)
+                                          train_bn=self.train_bn)
 
-        elif self.current_epoch == self.hparams.milestones[1]:
+        elif self.current_epoch == self.milestones[1]:
             _unfreeze_and_add_param_group(module=self.feature_extractor[:-2],
                                           optimizer=optimizer,
-                                          train_bn=self.hparams.train_bn)
+                                          train_bn=self.train_bn)
 
     def training_step(self, batch, batch_idx):
 
@@ -227,7 +243,7 @@ class TransferLearningModel(pl.LightningModule):
         y_bin = torch.ge(y_logits, 0)
 
         # 2. Compute loss & accuracy:
-        train_loss = self.loss(y_true, y_logits)
+        train_loss = self.loss(y_logits, y_true)
         num_correct = torch.eq(y_bin.view(-1), y_true.view(-1)).sum()
 
         # 3. Outputs:
@@ -246,7 +262,7 @@ class TransferLearningModel(pl.LightningModule):
                                        for output in outputs]).mean()
         train_acc_mean = torch.stack([output['num_correct']
                                       for output in outputs]).sum().float()
-        train_acc_mean /= (len(outputs) * self.hparams.batch_size)
+        train_acc_mean /= (len(outputs) * self.batch_size)
         return {'log': {'train_loss': train_loss_mean,
                         'train_acc': train_acc_mean,
                         'step': self.current_epoch}}
@@ -260,7 +276,7 @@ class TransferLearningModel(pl.LightningModule):
         y_bin = torch.ge(y_logits, 0)
 
         # 2. Compute loss & accuracy:
-        val_loss = self.loss(y_true, y_logits)
+        val_loss = self.loss(y_logits, y_true)
         num_correct = torch.eq(y_bin.view(-1), y_true.view(-1)).sum()
 
         return {'val_loss': val_loss,
@@ -273,7 +289,7 @@ class TransferLearningModel(pl.LightningModule):
                                      for output in outputs]).mean()
         val_acc_mean = torch.stack([output['num_correct']
                                     for output in outputs]).sum().float()
-        val_acc_mean /= (len(outputs) * self.hparams.batch_size)
+        val_acc_mean /= (len(outputs) * self.batch_size)
         return {'log': {'val_loss': val_loss_mean,
                         'val_acc': val_acc_mean,
                         'step': self.current_epoch}}
@@ -281,22 +297,21 @@ class TransferLearningModel(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = optim.Adam(filter(lambda p: p.requires_grad,
                                       self.parameters()),
-                               lr=self.hparams.lr)
+                               lr=self.lr)
 
         scheduler = MultiStepLR(optimizer,
-                                milestones=self.hparams.milestones,
-                                gamma=self.hparams.lr_scheduler_gamma)
+                                milestones=self.milestones,
+                                gamma=self.lr_scheduler_gamma)
 
         return [optimizer], [scheduler]
 
     def prepare_data(self):
         """Download images and prepare images datasets."""
-
-        # 1. Download the images
         download_and_extract_archive(url=DATA_URL,
                                      download_root=self.dl_path,
                                      remove_finished=True)
 
+    def setup(self, stage: str):
         data_path = Path(self.dl_path).joinpath('cats_and_dogs_filtered')
 
         # 2. Load the data + preprocessing & data augmentation
@@ -326,8 +341,8 @@ class TransferLearningModel(pl.LightningModule):
 
         _dataset = self.train_dataset if train else self.valid_dataset
         loader = DataLoader(dataset=_dataset,
-                            batch_size=self.hparams.batch_size,
-                            num_workers=self.hparams.num_workers,
+                            batch_size=self.batch_size,
+                            num_workers=self.num_workers,
                             shuffle=True if train else False)
 
         return loader
@@ -397,28 +412,28 @@ class TransferLearningModel(pl.LightningModule):
         return parser
 
 
-def main(hparams: argparse.Namespace) -> None:
+def main(args: argparse.Namespace) -> None:
     """Train the model.
 
     Args:
-        hparams: Model hyper-parameters
+        args: Model hyper-parameters
 
     Note:
         For the sake of the example, the images dataset will be downloaded
         to a temporary directory.
     """
 
-    with TemporaryDirectory(dir=hparams.root_data_path) as tmp_dir:
+    with TemporaryDirectory(dir=args.root_data_path) as tmp_dir:
 
-        model = TransferLearningModel(hparams, dl_path=tmp_dir)
+        model = TransferLearningModel(dl_path=tmp_dir, **vars(args))
 
         trainer = pl.Trainer(
             weights_summary=None,
-            show_progress_bar=True,
+            progress_bar_refresh_rate=1,
             num_sanity_val_steps=0,
-            gpus=hparams.gpus,
-            min_epochs=hparams.nb_epochs,
-            max_epochs=hparams.nb_epochs)
+            gpus=args.gpus,
+            min_epochs=args.nb_epochs,
+            max_epochs=args.nb_epochs)
 
         trainer.fit(model)
 
@@ -436,5 +451,4 @@ def get_args() -> argparse.Namespace:
 
 
 if __name__ == '__main__':
-
     main(get_args())

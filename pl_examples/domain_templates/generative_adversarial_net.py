@@ -7,7 +7,7 @@ After a few epochs, launch TensorBoard to see the images being generated at ever
 tensorboard --logdir default
 """
 import os
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 from collections import OrderedDict
 
 import numpy as np
@@ -20,6 +20,7 @@ from torch.utils.data import DataLoader
 from torchvision.datasets import MNIST
 
 from pytorch_lightning.core import LightningModule
+from pytorch_lightning import TrainResult
 from pytorch_lightning.trainer import Trainer
 
 
@@ -72,18 +73,28 @@ class Discriminator(nn.Module):
 
 class GAN(LightningModule):
 
-    def __init__(self, hparams):
+    def __init__(self,
+                 latent_dim: int = 100,
+                 lr: float = 0.0002,
+                 b1: float = 0.5,
+                 b2: float = 0.999,
+                 batch_size: int = 64, **kwargs):
         super().__init__()
-        self.hparams = hparams
+
+        self.latent_dim = latent_dim
+        self.lr = lr
+        self.b1 = b1
+        self.b2 = b2
+        self.batch_size = batch_size
 
         # networks
         mnist_shape = (1, 28, 28)
-        self.generator = Generator(latent_dim=hparams.latent_dim, img_shape=mnist_shape)
+        self.generator = Generator(latent_dim=self.latent_dim, img_shape=mnist_shape)
         self.discriminator = Discriminator(img_shape=mnist_shape)
 
-        # cache for generated images
-        self.generated_imgs = None
-        self.last_imgs = None
+        self.validation_z = torch.randn(8, self.latent_dim)
+
+        self.example_input_array = torch.zeros(2, hparams.latent_dim)
 
     def forward(self, z):
         return self.generator(z)
@@ -93,21 +104,21 @@ class GAN(LightningModule):
 
     def training_step(self, batch, batch_idx, optimizer_idx):
         imgs, _ = batch
-        self.last_imgs = imgs
+
+        # sample noise
+        z = torch.randn(imgs.shape[0], self.latent_dim)
+        z = z.type_as(imgs)
 
         # train generator
         if optimizer_idx == 0:
-            # sample noise
-            z = torch.randn(imgs.shape[0], self.hparams.latent_dim)
-            z = z.type_as(imgs)
 
             # generate images
             self.generated_imgs = self(z)
 
             # log sampled images
-            # sample_imgs = self.generated_imgs[:6]
-            # grid = torchvision.utils.make_grid(sample_imgs)
-            # self.logger.experiment.add_image('generated_images', grid, 0)
+            sample_imgs = self.generated_imgs[:6]
+            grid = torchvision.utils.make_grid(sample_imgs)
+            self.logger.experiment.add_image('generated_images', grid, 0)
 
             # ground truth result (ie: all fake)
             # put on GPU because we created this tensor inside training_loop
@@ -115,14 +126,15 @@ class GAN(LightningModule):
             valid = valid.type_as(imgs)
 
             # adversarial loss is binary cross-entropy
-            g_loss = self.adversarial_loss(self.discriminator(self.generated_imgs), valid)
+            g_loss = self.adversarial_loss(self.discriminator(self(z)), valid)
             tqdm_dict = {'g_loss': g_loss}
-            output = OrderedDict({
-                'loss': g_loss,
-                'progress_bar': tqdm_dict,
-                'log': tqdm_dict
-            })
-            return output
+            result = TrainResult(
+                minimize=g_loss,
+                checkpoint_on=True
+            )
+            result.log_dict(tqdm_dict)
+
+            return result
 
         # train discriminator
         if optimizer_idx == 1:
@@ -136,25 +148,26 @@ class GAN(LightningModule):
 
             # how well can it label as fake?
             fake = torch.zeros(imgs.size(0), 1)
-            fake = fake.type_as(fake)
+            fake = fake.type_as(imgs)
 
             fake_loss = self.adversarial_loss(
-                self.discriminator(self.generated_imgs.detach()), fake)
+                self.discriminator(self(z).detach()), fake)
 
             # discriminator loss is the average of these
             d_loss = (real_loss + fake_loss) / 2
             tqdm_dict = {'d_loss': d_loss}
-            output = OrderedDict({
-                'loss': d_loss,
-                'progress_bar': tqdm_dict,
-                'log': tqdm_dict
-            })
-            return output
+            result = TrainResult(
+                minimize=d_loss,
+                checkpoint_on=True
+            )
+            result.log_dict(tqdm_dict)
+
+            return result
 
     def configure_optimizers(self):
-        lr = self.hparams.lr
-        b1 = self.hparams.b1
-        b2 = self.hparams.b2
+        lr = self.lr
+        b1 = self.b1
+        b2 = self.b2
 
         opt_g = torch.optim.Adam(self.generator.parameters(), lr=lr, betas=(b1, b2))
         opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=lr, betas=(b1, b2))
@@ -164,11 +177,10 @@ class GAN(LightningModule):
         transform = transforms.Compose([transforms.ToTensor(),
                                         transforms.Normalize([0.5], [0.5])])
         dataset = MNIST(os.getcwd(), train=True, download=True, transform=transform)
-        return DataLoader(dataset, batch_size=self.hparams.batch_size)
+        return DataLoader(dataset, batch_size=self.batch_size)
 
     def on_epoch_end(self):
-        z = torch.randn(8, self.hparams.latent_dim)
-        z = z.type_as(self.last_imgs)
+        z = self.validation_z.type_as(self.generator.model[0].weight)
 
         # log sampled images
         sample_imgs = self(z)
@@ -176,15 +188,17 @@ class GAN(LightningModule):
         self.logger.experiment.add_image('generated_images', grid, self.current_epoch)
 
 
-def main(hparams):
+def main(args: Namespace) -> None:
     # ------------------------
     # 1 INIT LIGHTNING MODEL
     # ------------------------
-    model = GAN(hparams)
+    model = GAN(**vars(args))
 
     # ------------------------
     # 2 INIT TRAINER
     # ------------------------
+    # If use distubuted training  PyTorch recommends to use DistributedDataParallel.
+    # See: https://pytorch.org/docs/stable/nn.html#torch.nn.DataParallel
     trainer = Trainer()
 
     # ------------------------

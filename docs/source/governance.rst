@@ -1,4 +1,6 @@
-Pytorch Lightning Governance | Persons of interest
+.. _governance:
+
+PyTorch Lightning Governance | Persons of interest
 ==================================================
 
 Leads
@@ -16,3 +18,7 @@ Core Maintainers
 - Jeremy Jordan (`jeremyjordan <https://github.com/jeremyjordan>`_)
 - Tullie Murrell (`tullie <https://github.com/tullie>`_)
 - Adrian Wälchli (`awaelchli <https://github.com/awaelchli>`_)
+- Nicki Skafte (`skaftenicki <https://github.com/SkafteNicki>`_)
+- Peter Yu (`yukw777 <https://github.com/yukw777>`_)
+- Rohit Gupta (`rohitgr7 <https://github.com/rohitgr7>`_)
+- Lezwon Castelino (`lezwon <https://github.com/lezwon>`_)

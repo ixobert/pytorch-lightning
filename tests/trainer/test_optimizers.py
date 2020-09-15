@@ -1,7 +1,6 @@
 import pytest
 import torch
 
-import tests.base.utils as tutils
 from pytorch_lightning import Trainer
 from tests.base import EvalModelTemplate
 
@@ -10,20 +9,20 @@ def test_optimizer_with_scheduling(tmpdir):
     """ Verify that learning rate scheduling is working """
 
     hparams = EvalModelTemplate.get_default_hparams()
-    model = EvalModelTemplate(hparams)
+    model = EvalModelTemplate(**hparams)
     model.configure_optimizers = model.configure_optimizers__single_scheduler
 
     # fit model
     trainer = Trainer(
         default_root_dir=tmpdir,
         max_epochs=1,
-        val_percent_check=0.1,
-        train_percent_check=0.2
+        limit_val_batches=0.1,
+        limit_train_batches=0.2,
     )
     results = trainer.fit(model)
     assert results == 1
 
-    init_lr = hparams.learning_rate
+    init_lr = hparams.get('learning_rate')
     adjusted_lr = [pg['lr'] for pg in trainer.optimizers[0].param_groups]
 
     assert len(trainer.lr_schedulers) == 1, \
@@ -41,20 +40,20 @@ def test_multi_optimizer_with_scheduling(tmpdir):
     """ Verify that learning rate scheduling is working """
 
     hparams = EvalModelTemplate.get_default_hparams()
-    model = EvalModelTemplate(hparams)
+    model = EvalModelTemplate(**hparams)
     model.configure_optimizers = model.configure_optimizers__multiple_schedulers
 
     # fit model
     trainer = Trainer(
         default_root_dir=tmpdir,
         max_epochs=1,
-        val_percent_check=0.1,
-        train_percent_check=0.2
+        limit_val_batches=0.1,
+        limit_train_batches=0.2,
     )
     results = trainer.fit(model)
     assert results == 1
 
-    init_lr = hparams.learning_rate
+    init_lr = hparams.get('learning_rate')
     adjusted_lr1 = [pg['lr'] for pg in trainer.optimizers[0].param_groups]
     adjusted_lr2 = [pg['lr'] for pg in trainer.optimizers[1].param_groups]
 
@@ -76,20 +75,20 @@ def test_multi_optimizer_with_scheduling(tmpdir):
 def test_multi_optimizer_with_scheduling_stepping(tmpdir):
 
     hparams = EvalModelTemplate.get_default_hparams()
-    model = EvalModelTemplate(hparams)
+    model = EvalModelTemplate(**hparams)
     model.configure_optimizers = model.configure_optimizers__multiple_schedulers
 
     # fit model
     trainer = Trainer(
         default_root_dir=tmpdir,
         max_epochs=1,
-        val_percent_check=0.1,
-        train_percent_check=0.2
+        limit_val_batches=0.1,
+        limit_train_batches=0.2,
     )
     results = trainer.fit(model)
     assert results == 1
 
-    init_lr = hparams.learning_rate
+    init_lr = hparams.get('learning_rate')
     adjusted_lr1 = [pg['lr'] for pg in trainer.optimizers[0].param_groups]
     adjusted_lr2 = [pg['lr'] for pg in trainer.optimizers[1].param_groups]
 
@@ -115,15 +114,15 @@ def test_multi_optimizer_with_scheduling_stepping(tmpdir):
 def test_reduce_lr_on_plateau_scheduling(tmpdir):
 
     hparams = EvalModelTemplate.get_default_hparams()
-    model = EvalModelTemplate(hparams)
+    model = EvalModelTemplate(**hparams)
     model.configure_optimizers = model.configure_optimizers__reduce_lr_on_plateau
 
     # fit model
     trainer = Trainer(
         default_root_dir=tmpdir,
         max_epochs=1,
-        val_percent_check=0.1,
-        train_percent_check=0.2
+        limit_val_batches=0.1,
+        limit_train_batches=0.2,
     )
     results = trainer.fit(model)
     assert results == 1
@@ -205,15 +204,15 @@ def test_none_optimizer_warning():
 def test_none_optimizer(tmpdir):
 
     hparams = EvalModelTemplate.get_default_hparams()
-    model = EvalModelTemplate(hparams)
+    model = EvalModelTemplate(**hparams)
     model.configure_optimizers = model.configure_optimizers__empty
 
     # fit model
     trainer = Trainer(
         default_root_dir=tmpdir,
         max_epochs=1,
-        val_percent_check=0.1,
-        train_percent_check=0.2
+        limit_val_batches=0.1,
+        limit_train_batches=0.2,
     )
     result = trainer.fit(model)
 
@@ -232,9 +231,27 @@ def test_configure_optimizer_from_dict(tmpdir):
             return config
 
     hparams = EvalModelTemplate.get_default_hparams()
-    model = CurrentModel(hparams)
+    model = CurrentModel(**hparams)
 
     # fit model
-    trainer = Trainer(default_save_path=tmpdir, max_epochs=1)
+    trainer = Trainer(
+        default_root_dir=tmpdir,
+        max_epochs=1,
+    )
     result = trainer.fit(model)
     assert result == 1
+
+
+def test_configure_optimizers_with_frequency(tmpdir):
+    """
+    Test that multiple optimizers work when corresponding frequency is set.
+    """
+    model = EvalModelTemplate()
+    model.configure_optimizers = model.configure_optimizers__multiple_optimizers_frequency
+
+    trainer = Trainer(
+        default_root_dir=tmpdir,
+        max_epochs=1
+    )
+    result = trainer.fit(model)
+    assert result

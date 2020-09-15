@@ -1,5 +1,6 @@
 from abc import ABC
 from collections import OrderedDict
+from pytorch_lightning.core.step_result import EvalResult
 
 import torch
 
@@ -23,33 +24,55 @@ class ValidationStepVariations(ABC):
         # acc
         labels_hat = torch.argmax(y_hat, dim=1)
         val_acc = torch.sum(y == labels_hat).item() / (len(y) * 1.0)
-        val_acc = torch.tensor(val_acc)
+        val_acc = torch.tensor(val_acc).type_as(x)
 
-        if self.on_gpu:
-            val_acc = val_acc.cuda(loss_val.device.index)
+        output = OrderedDict({
+            'val_loss': loss_val,
+            'val_acc': val_acc,
+            'test_dic': {'val_loss_a': loss_val}
+        })
+        return output
 
-        # in DP mode (default) make sure if result is scalar, there's another dim in the beginning
-        if self.trainer.use_dp:
-            loss_val = loss_val.unsqueeze(0)
-            val_acc = val_acc.unsqueeze(0)
+    def validation_step_result_obj(self, batch, batch_idx, *args, **kwargs):
+        x, y = batch
+        x = x.view(x.size(0), -1)
+        y_hat = self(x)
 
-        # alternate possible outputs to test
-        if batch_idx % 1 == 0:
-            output = OrderedDict({
-                'val_loss': loss_val,
-                'val_acc': val_acc,
-            })
-            return output
-        if batch_idx % 2 == 0:
-            return val_acc
+        loss_val = self.loss(y, y_hat)
 
-        if batch_idx % 3 == 0:
-            output = OrderedDict({
-                'val_loss': loss_val,
-                'val_acc': val_acc,
-                'test_dic': {'val_loss_a': loss_val}
-            })
-            return output
+        # acc
+        labels_hat = torch.argmax(y_hat, dim=1)
+        val_acc = torch.sum(y == labels_hat).item() / (len(y) * 1.0)
+        val_acc = torch.tensor(val_acc).type_as(x)
+
+        result = EvalResult(checkpoint_on=loss_val, early_stop_on=loss_val)
+        result.log_dict({
+            'val_loss': loss_val,
+            'val_acc': val_acc,
+        })
+        return result
+
+    def validation_step_result_obj_dp(self, batch, batch_idx, *args, **kwargs):
+        x, y = batch
+        x = x.view(x.size(0), -1)
+        y_hat = self(x.to(self.device))
+
+        y = y.to(y_hat.device)
+        loss_val = self.loss(y, y_hat)
+
+        # acc
+        labels_hat = torch.argmax(y_hat, dim=1)
+        val_acc = torch.sum(y == labels_hat).item() / (len(y) * 1.0)
+        val_acc = torch.tensor(val_acc).type_as(x)
+
+        result = EvalResult(checkpoint_on=loss_val, early_stop_on=loss_val)
+        result.log_dict({
+            'val_loss': loss_val,
+            'val_acc': val_acc,
+        })
+
+        self.validation_step_called = True
+        return result
 
     def validation_step__multiple_dataloaders(self, batch, batch_idx, dataloader_idx, **kwargs):
         """
@@ -66,36 +89,10 @@ class ValidationStepVariations(ABC):
         # acc
         labels_hat = torch.argmax(y_hat, dim=1)
         val_acc = torch.sum(y == labels_hat).item() / (len(y) * 1.0)
-        val_acc = torch.tensor(val_acc)
+        val_acc = torch.tensor(val_acc).type_as(x)
 
-        if self.on_gpu:
-            val_acc = val_acc.cuda(loss_val.device.index)
-
-        # in DP mode (default) make sure if result is scalar, there's another dim in the beginning
-        if self.trainer.use_dp:
-            loss_val = loss_val.unsqueeze(0)
-            val_acc = val_acc.unsqueeze(0)
-
-        # alternate possible outputs to test
-        if batch_idx % 1 == 0:
-            output = OrderedDict({
-                'val_loss': loss_val,
-                'val_acc': val_acc,
-            })
-            return output
-        if batch_idx % 2 == 0:
-            return val_acc
-
-        if batch_idx % 3 == 0:
-            output = OrderedDict({
-                'val_loss': loss_val,
-                'val_acc': val_acc,
-                'test_dic': {'val_loss_a': loss_val}
-            })
-            return output
-        if batch_idx % 5 == 0:
-            output = OrderedDict({
-                f'val_loss_{dataloader_idx}': loss_val,
-                f'val_acc_{dataloader_idx}': val_acc,
-            })
-            return output
+        output = OrderedDict({
+            f'val_loss_{dataloader_idx}': loss_val,
+            f'val_acc_{dataloader_idx}': val_acc,
+        })
+        return output

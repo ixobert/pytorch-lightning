@@ -1,15 +1,17 @@
 .. role:: hidden
     :class: hidden-section
 
+.. _trainer:
+
 Trainer
 =======
 .. automodule:: pytorch_lightning.trainer
    :members: fit, test
    :noindex:
    :exclude-members:
-        run_pretrain_routine,
+        setup_training,
         _abc_impl,
-        _Trainer__set_random_port,
+        set_random_port,
         _Trainer__set_root_gpu,
         _Trainer__init_optimizers,
         _Trainer__parse_gpu_ids,

@@ -2,6 +2,8 @@
 
     from pytorch_lightning.trainer.trainer import Trainer
     from pytorch_lightning.core.lightning import LightningModule
+    
+.. _lr_finder:
 
 Learning Rate Finder
 --------------------
@@ -18,16 +20,18 @@ after each processed batch and the corresponding loss is logged. The result of
 this is a `lr` vs. `loss` plot that can be used as guidance for choosing a optimal
 initial lr. 
 
-Warnings:
-- For the moment, this feature only works with models having a single optimizer.
-- LR support for DDP is not implemented yet, it is comming soon.
+.. warning:: 
+    For the moment, this feature only works with models having a single optimizer. 
+    LR support for DDP is not implemented yet, it is comming soon.
+
+----------
 
 Using Lightning's built-in LR finder
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 In the most basic use case, this feature can be enabled during trainer construction
 with ``Trainer(auto_lr_find=True)``. When ``.fit(model)`` is called, the LR finder
-will automatically be run before any training is done. The ``lr`` that is found
+will automatically run before any training is done. The ``lr`` that is found
 and used will be written to the console and logged together with all other
 hyperparameters of the model.
     
@@ -36,34 +40,30 @@ hyperparameters of the model.
     # default: no automatic learning rate finder
     trainer = Trainer(auto_lr_find=False)
 
-When the ``lr`` or ``learning_rate`` key in hparams exists, this flag sets your learning_rate.
-In both cases, if the respective fields are not found, an error will be thrown.
-        
+This flag sets your learning rate which can be accessed via ``self.lr`` or ``self.learning_rate``.
+
 .. testcode::
 
     class LitModel(LightningModule):
 
-        def __init__(self, hparams):
-            self.hparams = hparams
+        def __init__(self, learning_rate):
+            self.learning_rate = learning_rate
 
         def configure_optimizers(self):
-            return Adam(self.parameters(), lr=self.hparams.lr|self.hparams.learning_rate)
+            return Adam(self.parameters(), lr=(self.lr or self.learning_rate))
 
     # finds learning rate automatically
     # sets hparams.lr or hparams.learning_rate to that learning rate
     trainer = Trainer(auto_lr_find=True)
 
-To use an arbitrary value set it in the parameter.
+To use an arbitrary value set it as auto_lr_find
 
 .. testcode::
 
     # to set to your own hparams.my_value
     trainer = Trainer(auto_lr_find='my_value')
 
-Under the hood, when you call fit, this is what happens.  
-
-1. Run learning rate finder.
-2. Run actual fit.   
+Under the hood, when you call fit it runs the learning rate finder before actually calling fit.
 
 .. code-block:: python
         
@@ -83,7 +83,7 @@ of this would look like
     trainer = Trainer()
     
     # Run learning rate finder
-    lr_finder = trainer.lr_find(model)
+    lr_finder = trainer.tuner.lr_find(model)
     
     # Results can be found in
     lr_finder.results
@@ -97,7 +97,7 @@ of this would look like
     
     # update hparams of the model
     model.hparams.lr = new_lr
-    
+
     # Fit model
     trainer.fit(model)
     
@@ -110,7 +110,5 @@ This is the point returned py ``lr_finder.suggestion()``.
 
 The parameters of the algorithm can be seen below.
 
-.. autoclass:: pytorch_lightning.trainer.lr_finder.TrainerLRFinderMixin
-   :members: lr_find
+.. autofunction:: pytorch_lightning.tuner.lr_finder.lr_find
    :noindex:
-   :exclude-members: _run_lr_finder_internally, save_checkpoint, restore

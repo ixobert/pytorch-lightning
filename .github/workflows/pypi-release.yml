@@ -1,26 +1,21 @@
 name: PyPI Release
 
 # https://help.github.com/en/actions/reference/events-that-trigger-workflows
-on:
-  # Trigger the workflow on push or pull request,
-  # but only for the master branch
+on:  # Trigger the workflow on push or pull request, but only for the master branch
   push:
-    branches:
-      - master
+    branches: [master]
   release:
-    types:
-      - created
+    types: [created]
 
 # based on https://github.com/pypa/gh-action-pypi-publish
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
 
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python 3.7
-      uses: actions/setup-python@v1
+    - uses: actions/setup-python@v2
       with:
         python-version: 3.7
 

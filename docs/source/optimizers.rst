@@ -1,8 +1,10 @@
+.. _optimizers:
+
 Optimization
 ===============
 
 Learning rate scheduling
--------------------------------------
+------------------------
 Every optimizer you use can be paired with any `LearningRateScheduler <https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate>`_.
 
 .. testcode::
@@ -17,7 +19,7 @@ Every optimizer you use can be paired with any `LearningRateScheduler <https://p
       scheduler = ReduceLROnPlateau(optimizer, ...)
       return [optimizer], [scheduler]
 
-   # Two optimziers each with a scheduler
+   # Two optimizers each with a scheduler
    def configure_optimizers(self):
       optimizer1 = Adam(...)
       optimizer2 = SGD(...)
@@ -39,9 +41,10 @@ Every optimizer you use can be paired with any `LearningRateScheduler <https://p
       ]
       return optimizers, schedulers
 
+----------
 
 Use multiple optimizers (like GANs)
--------------------------------------
+-----------------------------------
 To use multiple optimizers return > 1 optimizers from :meth:`pytorch_lightning.core.LightningModule.configure_optimizers`
 
 .. testcode::
@@ -71,9 +74,10 @@ Lightning will call each optimizer sequentially:
       for scheduler in scheduler:
          scheduler.step()
 
+----------
 
 Step optimizers at arbitrary intervals
-----------------------------------------
+--------------------------------------
 To do more interesting things with your optimizers such as learning rate warm-up or odd scheduling,
 override the :meth:`optimizer_step` function.
 
@@ -81,12 +85,14 @@ For example, here step optimizer A every 2 batches and optimizer B every 4 batch
 
 .. testcode::
 
-    def optimizer_step(self, current_epoch, batch_nb, optimizer, optimizer_i, second_order_closure=None):
+    def optimizer_step(self, current_epoch, batch_nb, optimizer, optimizer_idx, second_order_closure=None, on_tpu=False, using_native_amp=False, using_lbfgs=False):
         optimizer.step()
-        optimizer.zero_grad()
+
+    def optimizer_zero_grad(self, current_epoch, batch_idx, optimizer, opt_idx):
+      optimizer.zero_grad()
 
     # Alternating schedule for optimizer steps (ie: GANs)
-    def optimizer_step(self, current_epoch, batch_nb, optimizer, optimizer_i, second_order_closure=None):
+    def optimizer_step(self, current_epoch, batch_nb, optimizer, optimizer_idx, second_order_closure=None, on_tpu=False, using_native_amp=False, using_lbfgs=False):
         # update generator opt every 2 steps
         if optimizer_i == 0:
             if batch_nb % 2 == 0 :
@@ -107,7 +113,7 @@ Here we add a learning-rate warm up
 .. testcode::
 
     # learning rate warm-up
-    def optimizer_step(self, current_epoch, batch_nb, optimizer, optimizer_i, second_order_closure=None):
+    def optimizer_step(self, current_epoch, batch_nb, optimizer, optimizer_idx, second_order_closure=None, on_tpu=False, using_native_amp=False, using_lbfgs=False):
         # warm up lr
         if self.trainer.global_step < 500:
             lr_scale = min(1., float(self.trainer.global_step + 1) / 500.)

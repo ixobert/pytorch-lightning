@@ -2,8 +2,10 @@
 
     from pytorch_lightning.trainer.trainer import Trainer
 
+.. _single_gpu:
+
 Single GPU Training
-====================
+===================
 Make sure you are running on a machine that has at least one GPU. Lightning handles all the NVIDIA flags for you,
 there's no need to set them yourself.
 

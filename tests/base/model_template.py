@@ -1,8 +1,8 @@
-from argparse import Namespace
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from typing import Generic, TypeVar
 
 from pytorch_lightning.core.lightning import LightningModule
 from tests.base.datasets import TrialMNIST, PATH_DATASETS
@@ -30,22 +30,51 @@ class EvalModelTemplate(
     ValDataloaderVariations,
     TestDataloaderVariations,
     ConfigureOptimizersPool,
-    LightningModule
+    LightningModule,
 ):
     """
     This template houses all  combinations of model  configurations  we want to test
 
     >>> model = EvalModelTemplate()
     """
-    def __init__(self, hparams: object = None) -> object:
-        """Pass in parsed HyperOptArgumentParser to the model."""
-        if hparams is None:
-            hparams = EvalModelTemplate.get_default_hparams()
+
+    def __init__(
+        self,
+        drop_prob: float = 0.2,
+        batch_size: int = 32,
+        in_features: int = 28 * 28,
+        learning_rate: float = 0.001 * 8,
+        optimizer_name: str = 'adam',
+        data_root: str = PATH_DATASETS,
+        out_features: int = 10,
+        hidden_dim: int = 1000,
+        b1: float = 0.5,
+        b2: float = 0.999,
+    ):
         # init superclass
         super().__init__()
-        self.hparams = Namespace(**hparams) if isinstance(hparams, dict) else hparams
+        self.save_hyperparameters()
 
-        # if you specify an example input, the summary will show input/output for each layer
+        self.drop_prob = drop_prob
+        self.batch_size = batch_size
+        self.in_features = in_features
+        self.learning_rate = learning_rate
+        self.optimizer_name = optimizer_name
+        self.data_root = data_root
+        self.out_features = out_features
+        self.hidden_dim = hidden_dim
+        self.b1 = b1
+        self.b2 = b2
+        self.training_step_called = False
+        self.training_step_end_called = False
+        self.training_epoch_end_called = False
+        self.validation_step_called = False
+        self.validation_step_end_called = False
+        self.validation_epoch_end_called = False
+        self.test_step_called = False
+        self.test_step_end_called = False
+        self.test_epoch_end_called = False
+
         self.example_input_array = torch.rand(5, 28 * 28)
 
         # build model
@@ -56,17 +85,11 @@ class EvalModelTemplate(
         Simple model for testing
         :return:
         """
-        self.c_d1 = nn.Linear(
-            in_features=self.hparams.in_features,
-            out_features=self.hparams.hidden_dim
-        )
-        self.c_d1_bn = nn.BatchNorm1d(self.hparams.hidden_dim)
-        self.c_d1_drop = nn.Dropout(self.hparams.drop_prob)
+        self.c_d1 = nn.Linear(in_features=self.in_features, out_features=self.hidden_dim)
+        self.c_d1_bn = nn.BatchNorm1d(self.hidden_dim)
+        self.c_d1_drop = nn.Dropout(self.drop_prob)
 
-        self.c_d2 = nn.Linear(
-            in_features=self.hparams.hidden_dim,
-            out_features=self.hparams.out_features
-        )
+        self.c_d2 = nn.Linear(in_features=self.hidden_dim, out_features=self.out_features)
 
     def forward(self, x):
         x = self.c_d1(x)
@@ -84,10 +107,10 @@ class EvalModelTemplate(
         return nll
 
     def prepare_data(self):
-        _ = TrialMNIST(root=self.hparams.data_root, train=True, download=True)
+        TrialMNIST(root=self.data_root, train=True, download=True)
 
     @staticmethod
-    def get_default_hparams(continue_training: bool = False, hpc_exp_number: int = 0) -> Namespace:
+    def get_default_hparams(continue_training: bool = False, hpc_exp_number: int = 0) -> dict:
         args = dict(
             drop_prob=0.2,
             batch_size=32,
@@ -103,9 +126,42 @@ class EvalModelTemplate(
 
         if continue_training:
             args.update(
-                test_tube_do_checkpoint_load=True,
-                hpc_exp_number=hpc_exp_number,
+                test_tube_do_checkpoint_load=True, hpc_exp_number=hpc_exp_number,
             )
 
-        hparams = Namespace(**args)
-        return hparams
+        return args
+
+
+T = TypeVar('T')
+
+
+class GenericParentEvalModelTemplate(Generic[T], EvalModelTemplate):
+    def __init__(
+        self,
+        drop_prob: float,
+        batch_size: int,
+        in_features: int,
+        learning_rate: float,
+        optimizer_name: str,
+        data_root: str,
+        out_features: int,
+        hidden_dim: int,
+        b1: float,
+        b2: float,
+    ):
+        super().__init__(
+            drop_prob=drop_prob,
+            batch_size=batch_size,
+            in_features=in_features,
+            learning_rate=learning_rate,
+            optimizer_name=optimizer_name,
+            data_root=data_root,
+            out_features=out_features,
+            hidden_dim=hidden_dim,
+            b1=b1,
+            b2=b2,
+        )
+
+
+class GenericEvalModelTemplate(GenericParentEvalModelTemplate[int]):
+    pass

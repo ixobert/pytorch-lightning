@@ -2,13 +2,16 @@
 
     from pytorch_lightning.trainer.trainer import Trainer
 
+.. _training_tricks:
 
 Training Tricks
 ================
 Lightning implements various tricks to help during training
 
+----------
+
 Accumulate gradients
--------------------------------------
+--------------------
 Accumulated gradients runs K small batches of size N before doing a backwards pass.
 The effect is a large effective batch size of size KxN.
 
@@ -19,9 +22,10 @@ The effect is a large effective batch size of size KxN.
     # DEFAULT (ie: no accumulated grads)
     trainer = Trainer(accumulate_grad_batches=1)
 
+----------
 
 Gradient Clipping
--------------------------------------
+-----------------
 Gradient clipping may be enabled to avoid exploding gradients. Specifically, this will `clip the gradient
 norm <https://pytorch.org/docs/stable/nn.html#torch.nn.utils.clip_grad_norm_>`_ computed over all model parameters together.
 
@@ -35,11 +39,13 @@ norm <https://pytorch.org/docs/stable/nn.html#torch.nn.utils.clip_grad_norm_>`_ 
     # clip gradients with norm above 0.5
     trainer = Trainer(gradient_clip_val=0.5)
 
+----------
+
 Auto scaling of batch size
 --------------------------
 Auto scaling of batch size may be enabled to find the largest batch size that fits into
 memory. Larger batch size often yields better estimates of gradients, but may also result in
-longer training time.
+longer training time. Inspired by https://github.com/BlackHC/toma.
 
 .. seealso:: :class:`~pytorch_lightning.trainer.trainer.Trainer`
 
@@ -50,6 +56,9 @@ longer training time.
 
     # Autoscale batch size 
     trainer = Trainer(auto_scale_batch_size=None|'power'|'binsearch')
+
+    # find the batch size
+    trainer.tune(model)
 
 Currently, this feature supports two modes `'power'` scaling and `'binsearch'`
 scaling. In `'power'` scaling, starting from a batch size of 1 keeps doubling 
@@ -67,7 +76,7 @@ a binary search.
     .. code-block:: python
         
         def train_dataloader(self):
-            return DataLoader(train_dataset, batch_size=self.hparams.batch_size)
+            return DataLoader(train_dataset, batch_size=self.batch_size)
 
 .. warning::
             
@@ -81,9 +90,10 @@ invoking the trainer method `.scale_batch_size` themself (see description below)
 
     # Use default in trainer construction
     trainer = Trainer()
+    tuner = Tuner(trainer)
 
     # Invoke method
-    new_batch_size = trainer.scale_batch_size(model, ...)
+    new_batch_size = tuner.scale_batch_size(model, ...)
 
     # Override old batch size
     model.hparams.batch_size = new_batch_size
